@@ -1,0 +1,27 @@
+{
+  "name": "kotodama-crm",
+  "version": "0.1.0",
+  "private": true,
+  "description": "KotodamaCRM - WhatsApp CRM para Seicho-No-Ie do Brasil",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "db:migrate": "npm run db:migrate -w @kotodama/api",
+    "db:seed": "npm run db:seed -w @kotodama/api",
+    "db:studio": "npm run db:studio -w @kotodama/api"
+  },
+  "devDependencies": {
+    "turbo": "^2.0.0",
+    "typescript": "^5.4.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "npm@10.0.0"
+}
