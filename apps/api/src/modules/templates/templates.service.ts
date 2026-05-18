@@ -74,6 +74,31 @@ export class TemplatesService {
     if (!exists) throw new BadRequestException('Número WhatsApp inválido')
 
     const variables = extractTemplateVariables(dto.components)
+    const language = dto.language ?? 'pt_BR'
+
+    // Tenta submeter na Meta primeiro. Se a Meta rejeitar (validação), nem
+    // criamos localmente — o usuário recebe o erro e pode corrigir.
+    let externalId: string | null = null
+    let metaStatus: TemplateStatus = TemplateStatus.PENDING
+    try {
+      const number = await this.numbers.getInternal(dto.whatsAppNumberId)
+      const result = await this.meta.createTemplate({
+        wabaId: number.wabaId,
+        accessToken: number.accessToken,
+        name: dto.name.trim(),
+        language,
+        category: dto.category,
+        components: dto.components,
+      })
+      externalId = result.id
+      metaStatus = this.mapStatus(result.status)
+    } catch (err) {
+      // Re-lança pro controller: cliente vê 400 com a mensagem da Meta
+      this.logger.warn(
+        `Submit à Meta falhou para template "${dto.name}": ${(err as Error).message}`,
+      )
+      throw err
+    }
 
     try {
       return await this.prisma.template.create({
@@ -81,10 +106,11 @@ export class TemplatesService {
           whatsAppNumberId: dto.whatsAppNumberId,
           name: dto.name.trim(),
           category: dto.category,
-          language: dto.language ?? 'pt_BR',
+          language,
           components: dto.components as Prisma.InputJsonValue,
           variables: variables as Prisma.InputJsonValue,
-          status: TemplateStatus.PENDING,
+          status: metaStatus,
+          externalId,
         },
       })
     } catch (e) {

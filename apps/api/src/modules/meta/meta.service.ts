@@ -113,4 +113,61 @@ export class MetaService {
       throw err
     }
   }
+
+  /**
+   * Cria um template na Meta e o submete para aprovação. Retorna o id
+   * externo (id da Meta) e o status retornado (normalmente PENDING).
+   */
+  async createTemplate(args: {
+    wabaId: string
+    accessToken: string
+    name: string
+    language: string
+    category: string
+    components: Array<Record<string, unknown>>
+  }): Promise<{ id: string; status: string; category?: string }> {
+    const url = `https://graph.facebook.com/${this.graphVersion}/${args.wabaId}/message_templates`
+    try {
+      const res = await axios.post(
+        url,
+        {
+          name: args.name,
+          language: args.language,
+          category: args.category,
+          components: args.components,
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${args.accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 20000,
+        },
+      )
+      const id = res.data?.id
+      if (!id) {
+        this.logger.error(`createTemplate sem id: ${JSON.stringify(res.data)}`)
+        throw new BadRequestException('Resposta inesperada da Meta')
+      }
+      return {
+        id,
+        status: res.data?.status ?? 'PENDING',
+        category: res.data?.category,
+      }
+    } catch (err) {
+      if (err instanceof AxiosError && err.response) {
+        const metaError = (err.response.data as {
+          error?: { message?: string; code?: number; error_user_msg?: string; error_user_title?: string }
+        })?.error
+        const message =
+          metaError?.error_user_msg ?? metaError?.message ?? err.message
+        const code = metaError?.code ?? err.response.status
+        this.logger.warn(
+          `Meta createTemplate falhou: code=${code} message="${message}"`,
+        )
+        throw new BadRequestException(`Meta: ${message}`)
+      }
+      throw err
+    }
+  }
 }
