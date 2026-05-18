@@ -4,6 +4,7 @@ buildCommand = "npm run build --workspace=@kotodama/api"
 watchPatterns = ["/apps/api/**", "/packages/shared/**", "/package-lock.json"]
 
 [deploy]
+preDeployCommand = "cd apps/api && npx prisma migrate deploy && npx tsx prisma/seed.ts"
 startCommand = "npm run start --workspace=@kotodama/api"
 healthcheckPath = "/api/v1/health"
 healthcheckTimeout = 30

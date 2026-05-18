@@ -1,0 +1,10 @@
+[build]
+builder = "nixpacks"
+buildCommand = "npm run build --workspace=@kotodama/web"
+watchPatterns = ["/apps/web/**", "/packages/shared/**", "/package-lock.json"]
+
+[deploy]
+startCommand = "npm run start --workspace=@kotodama/web"
+healthcheckPath = "/login"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
