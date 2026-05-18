@@ -12,6 +12,7 @@ import { TagsModule } from './modules/tags/tags.module'
 import { ContactsModule } from './modules/contacts/contacts.module'
 import { WhatsAppNumbersModule } from './modules/whatsapp-numbers/whatsapp-numbers.module'
 import { TemplatesModule } from './modules/templates/templates.module'
+import { WebhooksModule } from './modules/webhooks/webhooks.module'
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard'
 import { PermissionsGuard } from './common/guards/permissions.guard'
 
@@ -30,6 +31,7 @@ import { PermissionsGuard } from './common/guards/permissions.guard'
     ContactsModule,
     WhatsAppNumbersModule,
     TemplatesModule,
+    WebhooksModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
