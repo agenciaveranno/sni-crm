@@ -12,10 +12,11 @@ import {
   Phone,
   Plus,
   Trash2,
+  Upload,
   Video,
 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
-import { useMemo } from 'react'
+import { useMemo, useRef } from 'react'
 import { useFieldArray, useForm } from 'react-hook-form'
 import { toast } from 'sonner'
 import { z } from 'zod'
@@ -195,6 +196,23 @@ export function TemplateForm({ templateId, initial }: TemplateFormProps) {
   })
 
   const buttons = useFieldArray({ control: form.control, name: 'buttons' })
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const upload = useMutation({
+    mutationFn: async (file: File) => {
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await api.post<{ handle: string }>('/meta/upload', fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+      return res.data.handle
+    },
+    onSuccess: (handle) => {
+      form.setValue('headerMediaHandle', handle, { shouldDirty: true })
+      toast.success('Mídia enviada à Meta')
+    },
+    onError: (err) => toast.error(apiErrorMessage(err)),
+  })
 
   const headerType = form.watch('headerType')
   const headerText = form.watch('headerText') ?? ''
@@ -385,16 +403,62 @@ export function TemplateForm({ templateId, initial }: TemplateFormProps) {
             headerType === 'VIDEO' ||
             headerType === 'DOCUMENT') && (
             <div className="space-y-2">
-              <label className="label">Media handle (upload via Meta)</label>
+              <label className="label">
+                {headerType === 'IMAGE' && 'Imagem'}
+                {headerType === 'VIDEO' && 'Vídeo'}
+                {headerType === 'DOCUMENT' && 'PDF'}
+              </label>
               <input
-                className="input font-mono text-xs"
-                placeholder="4::aW1hZ2UvanBlZw==:..."
+                ref={fileInputRef}
+                type="file"
+                className="hidden"
+                accept={
+                  headerType === 'IMAGE'
+                    ? 'image/jpeg,image/png'
+                    : headerType === 'VIDEO'
+                      ? 'video/mp4,video/3gpp'
+                      : 'application/pdf'
+                }
+                onChange={(e) => {
+                  const f = e.target.files?.[0]
+                  if (f) upload.mutate(f)
+                  e.target.value = ''
+                }}
+              />
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className="btn-ghost text-sm"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={upload.isPending}
+                >
+                  {upload.isPending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Upload className="h-3.5 w-3.5" />
+                  )}
+                  {upload.isPending
+                    ? 'Enviando…'
+                    : form.watch('headerMediaHandle')
+                      ? 'Substituir arquivo'
+                      : 'Selecionar arquivo'}
+                </button>
+                {form.watch('headerMediaHandle') && (
+                  <span className="text-xs text-success">
+                    ✓ Mídia carregada
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Max 16 MB.{' '}
+                {headerType === 'IMAGE' && 'JPG ou PNG.'}
+                {headerType === 'VIDEO' && 'MP4 ou 3GPP.'}
+                {headerType === 'DOCUMENT' && 'PDF.'}
+              </p>
+              <input
+                type="hidden"
                 {...form.register('headerMediaHandle')}
               />
-              <p className="text-xs text-muted-foreground">
-                Por enquanto cole aqui o handle retornado pelo resumable upload da
-                Meta. O upload direto pela UI entra em um próximo slice.
-              </p>
             </div>
           )}
         </div>

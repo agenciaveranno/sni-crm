@@ -21,9 +21,100 @@ export interface MetaTemplate {
 export class MetaService {
   private readonly logger = new Logger(MetaService.name)
   private readonly graphVersion: string
+  private readonly appId: string
+  private readonly appSecret: string
 
-  constructor(config: ConfigService) {
+  constructor(private readonly config: ConfigService) {
     this.graphVersion = config.get<string>('META_GRAPH_VERSION', 'v22.0')
+    this.appId = config.get<string>('META_APP_ID', '')
+    this.appSecret = config.get<string>('META_APP_SECRET', '')
+  }
+
+  /**
+   * Resumable upload pra Meta retornando o handle (h:...) que vai dentro
+   * de example.header_handle ao criar um template com mídia no cabeçalho.
+   *
+   * Protocolo (Cloud API):
+   * 1. POST /{appId}/uploads?file_name&file_length&file_type → session_id (upload:...)
+   * 2. POST /{session_id} com bytes + header file_offset:0 → { h: 'h:...' }
+   */
+  async uploadMedia(args: {
+    file: Buffer
+    mimeType: string
+    fileName: string
+  }): Promise<{ handle: string }> {
+    if (!this.appId || !this.appSecret) {
+      throw new BadRequestException(
+        'META_APP_ID e/ou META_APP_SECRET não configurados no servidor',
+      )
+    }
+    const appToken = `${this.appId}|${this.appSecret}`
+
+    let sessionId: string
+    try {
+      const sessionRes = await axios.post(
+        `https://graph.facebook.com/${this.graphVersion}/${this.appId}/uploads`,
+        null,
+        {
+          params: {
+            file_name: args.fileName,
+            file_length: args.file.length,
+            file_type: args.mimeType,
+          },
+          headers: { Authorization: `Bearer ${appToken}` },
+          timeout: 20000,
+        },
+      )
+      sessionId = sessionRes.data?.id
+      if (!sessionId) {
+        throw new BadRequestException('Meta não retornou session id')
+      }
+    } catch (err) {
+      throw this.translateAxiosError(err, 'iniciar upload session')
+    }
+
+    try {
+      const uploadRes = await axios.post(
+        `https://graph.facebook.com/${this.graphVersion}/${sessionId}`,
+        args.file,
+        {
+          headers: {
+            Authorization: `OAuth ${appToken}`,
+            file_offset: '0',
+            'Content-Type': args.mimeType,
+          },
+          timeout: 60000,
+          maxContentLength: Infinity,
+          maxBodyLength: Infinity,
+        },
+      )
+      const handle = uploadRes.data?.h
+      if (!handle) {
+        this.logger.error(
+          `Upload sem handle: ${JSON.stringify(uploadRes.data)}`,
+        )
+        throw new BadRequestException('Meta não retornou handle')
+      }
+      return { handle }
+    } catch (err) {
+      throw this.translateAxiosError(err, 'enviar bytes do upload')
+    }
+  }
+
+  private translateAxiosError(err: unknown, context: string): Error {
+    if (err instanceof AxiosError && err.response) {
+      const metaError = (err.response.data as {
+        error?: { message?: string; code?: number; error_user_msg?: string }
+      })?.error
+      const message =
+        metaError?.error_user_msg ?? metaError?.message ?? err.message
+      const code = metaError?.code ?? err.response.status
+      this.logger.warn(
+        `Meta ${context} falhou: code=${code} message="${message}"`,
+      )
+      return new BadRequestException(`Meta: ${message}`)
+    }
+    return err as Error
   }
 
   async sendTemplate(args: {
