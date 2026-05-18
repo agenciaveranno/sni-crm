@@ -4,8 +4,10 @@
   "private": true,
   "description": "KotodamaCRM API (NestJS + Prisma + BullMQ)",
   "scripts": {
+    "prebuild": "npm --prefix ../../packages/shared run build",
     "build": "nest build",
-    "start": "nest start",
+    "prestart": "npm run build",
+    "start": "node dist/main",
     "start:dev": "nest start --watch",
     "start:prod": "node dist/main",
     "start:worker": "node dist/worker",

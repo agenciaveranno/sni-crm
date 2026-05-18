@@ -16,8 +16,7 @@
     "plugins": [{ "name": "next" }],
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./*"],
-      "@kotodama/shared": ["../../packages/shared/src"]
+      "@/*": ["./*"]
     }
   },
   "include": [
