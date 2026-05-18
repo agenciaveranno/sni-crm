@@ -1,0 +1,267 @@
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common'
+import { normalizePhone } from '@kotodama/shared'
+import {
+  OptInMethod,
+  OptInStatus,
+  Prisma,
+} from '@prisma/client'
+import { PrismaService } from '../../prisma/prisma.service'
+import { AddContactTagsDto } from './dto/contact-tags.dto'
+import { CreateContactDto } from './dto/create-contact.dto'
+import { QueryContactsDto } from './dto/query-contacts.dto'
+import { UpdateContactDto } from './dto/update-contact.dto'
+
+@Injectable()
+export class ContactsService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  async list(query: QueryContactsDto) {
+    const where: Prisma.ContactWhereInput = {}
+
+    if (query.search) {
+      const s = query.search.trim()
+      where.OR = [
+        { name: { contains: s, mode: 'insensitive' } },
+        { phone: { contains: s } },
+        { email: { contains: s, mode: 'insensitive' } },
+      ]
+    }
+    if (query.optInStatus) where.optInStatus = query.optInStatus
+    if (query.tagIds?.length) {
+      where.tags = { some: { tagId: { in: query.tagIds } } }
+    }
+
+    const skip = (query.page - 1) * query.limit
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.contact.findMany({
+        where,
+        skip,
+        take: query.limit,
+        orderBy: { [query.sortBy]: query.sortOrder },
+        include: {
+          tags: { include: { tag: true } },
+        },
+      }),
+      this.prisma.contact.count({ where }),
+    ])
+
+    return {
+      data: items.map((c) => ({
+        id: c.id,
+        name: c.name,
+        phone: c.phone,
+        email: c.email,
+        notes: c.notes,
+        optInStatus: c.optInStatus,
+        optInMethod: c.optInMethod,
+        optInAt: c.optInAt,
+        createdAt: c.createdAt,
+        updatedAt: c.updatedAt,
+        tags: c.tags.map((t) => ({
+          id: t.tag.id,
+          name: t.tag.name,
+          color: t.tag.color,
+        })),
+      })),
+      pagination: {
+        page: query.page,
+        limit: query.limit,
+        total,
+        totalPages: Math.ceil(total / query.limit),
+      },
+    }
+  }
+
+  async create(dto: CreateContactDto, userId: string) {
+    const phone = normalizePhone(dto.phone)
+    if (!phone) throw new BadRequestException('Telefone inválido')
+
+    try {
+      return await this.prisma.contact.create({
+        data: {
+          name: dto.name.trim(),
+          phone,
+          email: dto.email?.toLowerCase().trim(),
+          notes: dto.notes,
+          optInStatus: OptInStatus.PENDING,
+          tags: dto.tagIds?.length
+            ? {
+                create: dto.tagIds.map((tagId) => ({
+                  tagId,
+                  assignedBy: userId,
+                })),
+              }
+            : undefined,
+        },
+        include: { tags: { include: { tag: true } } },
+      })
+    } catch (e) {
+      if (
+        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e.code === 'P2002'
+      ) {
+        throw new ConflictException('Já existe um contato com este telefone')
+      }
+      throw e
+    }
+  }
+
+  async findOne(id: string) {
+    const c = await this.prisma.contact.findUnique({
+      where: { id },
+      include: { tags: { include: { tag: true } } },
+    })
+    if (!c) throw new NotFoundException('Contato não encontrado')
+    return {
+      ...c,
+      tags: c.tags.map((t) => ({
+        id: t.tag.id,
+        name: t.tag.name,
+        color: t.tag.color,
+        assignedAt: t.assignedAt,
+      })),
+    }
+  }
+
+  async update(id: string, dto: UpdateContactDto) {
+    await this.ensureExists(id)
+    const data: Prisma.ContactUpdateInput = {}
+    if (dto.name !== undefined) data.name = dto.name.trim()
+    if (dto.email !== undefined) data.email = dto.email?.toLowerCase().trim() || null
+    if (dto.notes !== undefined) data.notes = dto.notes
+    if (dto.phone !== undefined) {
+      const phone = normalizePhone(dto.phone)
+      if (!phone) throw new BadRequestException('Telefone inválido')
+      data.phone = phone
+    }
+
+    try {
+      return await this.prisma.contact.update({
+        where: { id },
+        data,
+        include: { tags: { include: { tag: true } } },
+      })
+    } catch (e) {
+      if (
+        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e.code === 'P2002'
+      ) {
+        throw new ConflictException('Já existe um contato com este telefone')
+      }
+      throw e
+    }
+  }
+
+  async remove(id: string) {
+    await this.ensureExists(id)
+    await this.prisma.contact.delete({ where: { id } })
+    return { ok: true }
+  }
+
+  async addTags(id: string, dto: AddContactTagsDto, userId: string) {
+    await this.ensureExists(id)
+    await this.prisma.contactTag.createMany({
+      data: dto.tagIds.map((tagId) => ({
+        contactId: id,
+        tagId,
+        assignedBy: userId,
+      })),
+      skipDuplicates: true,
+    })
+    return this.findOne(id)
+  }
+
+  async removeTag(id: string, tagId: string) {
+    await this.ensureExists(id)
+    await this.prisma.contactTag.deleteMany({
+      where: { contactId: id, tagId },
+    })
+    return this.findOne(id)
+  }
+
+  async optIn(
+    id: string,
+    source?: string,
+    method: OptInMethod = OptInMethod.MANUAL,
+    ip?: string,
+  ) {
+    await this.ensureExists(id)
+    return this.prisma.contact.update({
+      where: { id },
+      data: {
+        optInStatus: OptInStatus.OPTED_IN,
+        optInMethod: method,
+        optInAt: new Date(),
+        optInSource: source,
+        optInIp: ip,
+      },
+    })
+  }
+
+  async optOut(id: string, source?: string) {
+    await this.ensureExists(id)
+    return this.prisma.contact.update({
+      where: { id },
+      data: {
+        optInStatus: OptInStatus.OPTED_OUT,
+        optInSource: source,
+      },
+    })
+  }
+
+  async messages(id: string) {
+    await this.ensureExists(id)
+    return this.prisma.inboxMessage.findMany({
+      where: { contactId: id },
+      orderBy: { receivedAt: 'desc' },
+      take: 100,
+    })
+  }
+
+  async exportCsv(query: QueryContactsDto) {
+    const where: Prisma.ContactWhereInput = {}
+    if (query.search) {
+      const s = query.search.trim()
+      where.OR = [
+        { name: { contains: s, mode: 'insensitive' } },
+        { phone: { contains: s } },
+      ]
+    }
+    if (query.optInStatus) where.optInStatus = query.optInStatus
+    if (query.tagIds?.length) {
+      where.tags = { some: { tagId: { in: query.tagIds } } }
+    }
+
+    const contacts = await this.prisma.contact.findMany({
+      where,
+      include: { tags: { include: { tag: true } } },
+      orderBy: { name: 'asc' },
+    })
+
+    const header = 'name,phone,email,optInStatus,tags,createdAt'
+    const rows = contacts.map((c) => {
+      const tags = c.tags.map((t) => t.tag.name).join('|')
+      const esc = (v: string | null | undefined) =>
+        v == null ? '' : `"${String(v).replace(/"/g, '""')}"`
+      return [
+        esc(c.name),
+        esc(c.phone),
+        esc(c.email),
+        c.optInStatus,
+        esc(tags),
+        c.createdAt.toISOString(),
+      ].join(',')
+    })
+    return [header, ...rows].join('\n')
+  }
+
+  private async ensureExists(id: string) {
+    const exists = await this.prisma.contact.count({ where: { id } })
+    if (!exists) throw new NotFoundException('Contato não encontrado')
+  }
+}

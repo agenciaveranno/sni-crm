@@ -1,0 +1,441 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────
+// USUÁRIOS E AUTENTICAÇÃO
+// ─────────────────────────────────────────
+
+enum UserRole {
+  ADMIN
+  OPERATOR
+}
+
+model User {
+  id           String    @id @default(cuid())
+  name         String
+  email        String    @unique
+  passwordHash String
+  role         UserRole  @default(OPERATOR)
+  active       Boolean   @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  permissions   Permission[]
+  auditLogs     AuditLog[]
+  campaigns     Campaign[]     @relation("CampaignCreatedBy")
+  imports       Import[]
+  inboxMessages InboxMessage[] @relation("AssignedMessages")
+
+  @@map("users")
+}
+
+model Permission {
+  id      String  @id @default(cuid())
+  userId  String
+  module  String
+  action  String
+  granted Boolean @default(true)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, module, action])
+  @@map("permissions")
+}
+
+// ─────────────────────────────────────────
+// CONTATOS E TAGS
+// ─────────────────────────────────────────
+
+enum OptInStatus {
+  PENDING
+  OPTED_IN
+  OPTED_OUT
+}
+
+enum OptInMethod {
+  MANUAL
+  IMPORT
+  FORM
+  QR_CODE
+}
+
+model Contact {
+  id          String       @id @default(cuid())
+  name        String
+  phone       String       @unique
+  email       String?
+  notes       String?
+  optInStatus OptInStatus  @default(PENDING)
+  optInMethod OptInMethod?
+  optInAt     DateTime?
+  optInSource String?
+  optInIp     String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  tags               ContactTag[]
+  campaignRecipients CampaignRecipient[]
+  inboxMessages      InboxMessage[]
+
+  @@index([phone])
+  @@map("contacts")
+}
+
+model Tag {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  color       String   @default("#1B4FA8")
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  contacts ContactTag[]
+
+  @@map("tags")
+}
+
+model ContactTag {
+  contactId  String
+  tagId      String
+  assignedAt DateTime @default(now())
+  assignedBy String?
+
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  tag     Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([contactId, tagId])
+  @@map("contact_tags")
+}
+
+// ─────────────────────────────────────────
+// NÚMEROS DE WHATSAPP
+// ─────────────────────────────────────────
+
+enum NumberStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum QualityRating {
+  GREEN
+  YELLOW
+  RED
+  UNKNOWN
+}
+
+model WhatsAppNumber {
+  id                 String        @id @default(cuid())
+  displayName        String
+  phoneNumber        String        @unique
+  phoneNumberId      String        @unique
+  wabaId             String
+  accessToken        String
+  webhookVerifyToken String
+  qualityRating      QualityRating @default(UNKNOWN)
+  messagingLimit     Int           @default(1000)
+  status             NumberStatus  @default(ACTIVE)
+  isDefault          Boolean       @default(false)
+  lastSyncAt         DateTime?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  templates     Template[]
+  campaigns     Campaign[]
+  inboxMessages InboxMessage[]
+
+  @@map("whatsapp_numbers")
+}
+
+// ─────────────────────────────────────────
+// TEMPLATES
+// ─────────────────────────────────────────
+
+enum TemplateCategory {
+  MARKETING
+  UTILITY
+  AUTHENTICATION
+}
+
+enum TemplateStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  PAUSED
+  DISABLED
+}
+
+model Template {
+  id               String           @id @default(cuid())
+  whatsAppNumberId String
+  name             String
+  externalId       String?
+  category         TemplateCategory
+  language         String           @default("pt_BR")
+  status           TemplateStatus   @default(PENDING)
+  components       Json
+  variables        Json             @default("[]")
+  rejectionReason  String?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  whatsAppNumber WhatsAppNumber @relation(fields: [whatsAppNumberId], references: [id])
+  campaigns      Campaign[]
+
+  @@unique([whatsAppNumberId, name])
+  @@map("templates")
+}
+
+// ─────────────────────────────────────────
+// CAMPANHAS
+// ─────────────────────────────────────────
+
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  RUNNING
+  PAUSED
+  COMPLETED
+  CANCELLED
+  FAILED
+}
+
+model Campaign {
+  id                String         @id @default(cuid())
+  name              String
+  whatsAppNumberId  String
+  templateId        String
+  templateVariables Json           @default("{}")
+  tagIds            String[]
+  totalRecipients   Int            @default(0)
+  sentCount         Int            @default(0)
+  deliveredCount    Int            @default(0)
+  readCount         Int            @default(0)
+  failedCount       Int            @default(0)
+  optOutCount       Int            @default(0)
+  status            CampaignStatus @default(DRAFT)
+  scheduledAt       DateTime?
+  startedAt         DateTime?
+  completedAt       DateTime?
+  createdById       String
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  whatsAppNumber WhatsAppNumber      @relation(fields: [whatsAppNumberId], references: [id])
+  template       Template            @relation(fields: [templateId], references: [id])
+  createdBy      User                @relation("CampaignCreatedBy", fields: [createdById], references: [id])
+  recipients     CampaignRecipient[]
+
+  @@map("campaigns")
+}
+
+enum RecipientStatus {
+  PENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+  OPTED_OUT
+  SKIPPED
+}
+
+model CampaignRecipient {
+  id                String          @id @default(cuid())
+  campaignId        String
+  contactId         String
+  phone             String
+  resolvedVariables Json            @default("{}")
+  status            RecipientStatus @default(PENDING)
+  waMessageId       String?
+  sentAt            DateTime?
+  deliveredAt       DateTime?
+  readAt            DateTime?
+  failedAt          DateTime?
+  errorCode         String?
+  errorMessage      String?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contact  Contact  @relation(fields: [contactId], references: [id])
+
+  @@index([campaignId])
+  @@index([waMessageId])
+  @@map("campaign_recipients")
+}
+
+// ─────────────────────────────────────────
+// IMPORTAÇÕES
+// ─────────────────────────────────────────
+
+enum ImportStatus {
+  UPLOADED
+  PROCESSING
+  COMPLETED
+  COMPLETED_WITH_ERRORS
+  FAILED
+}
+
+model Import {
+  id              String       @id @default(cuid())
+  fileName        String
+  filePath        String
+  status          ImportStatus @default(UPLOADED)
+  columnMapping   Json         @default("{}")
+  tagColumns      String[]     @default([])
+  fixedTags       String[]     @default([])
+  totalRows       Int          @default(0)
+  processedRows   Int          @default(0)
+  successRows     Int          @default(0)
+  errorRows       Int          @default(0)
+  newContacts     Int          @default(0)
+  updatedContacts Int          @default(0)
+  errors          Json         @default("[]")
+  processedById   String
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  processedBy User @relation(fields: [processedById], references: [id])
+
+  @@map("imports")
+}
+
+// ─────────────────────────────────────────
+// INBOX
+// ─────────────────────────────────────────
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  DOCUMENT
+  AUDIO
+  VIDEO
+  STICKER
+  LOCATION
+  INTERACTIVE
+  TEMPLATE
+  UNKNOWN
+}
+
+enum MessageStatus {
+  RECEIVED
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+model InboxMessage {
+  id               String           @id @default(cuid())
+  direction        MessageDirection
+  contactId        String
+  whatsAppNumberId String
+  waMessageId      String?          @unique
+  messageType      MessageType      @default(TEXT)
+  content          Json
+  status           MessageStatus
+  assignedToId     String?
+  isResolved       Boolean          @default(false)
+  resolvedAt       DateTime?
+  receivedAt       DateTime         @default(now())
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  contact        Contact        @relation(fields: [contactId], references: [id])
+  whatsAppNumber WhatsAppNumber @relation(fields: [whatsAppNumberId], references: [id])
+  assignedTo     User?          @relation("AssignedMessages", fields: [assignedToId], references: [id])
+
+  @@index([contactId])
+  @@index([waMessageId])
+  @@map("inbox_messages")
+}
+
+// ─────────────────────────────────────────
+// AUTOMAÇÕES
+// ─────────────────────────────────────────
+
+enum TriggerType {
+  OPT_OUT_RECEIVED
+  TAG_ADDED
+  CONTACT_CREATED
+  INBOUND_MESSAGE
+}
+
+enum ActionType {
+  SEND_TEMPLATE_MESSAGE
+  ADD_TAG
+  REMOVE_TAG
+  CALL_WEBHOOK
+}
+
+model AutomationRule {
+  id                String      @id @default(cuid())
+  name              String
+  description       String?
+  triggerType       TriggerType
+  triggerConditions Json        @default("{}")
+  actionType        ActionType
+  actionConfig      Json        @default("{}")
+  active            Boolean     @default(true)
+  executionCount    Int         @default(0)
+  lastExecutedAt    DateTime?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  @@map("automation_rules")
+}
+
+// ─────────────────────────────────────────
+// LINKS DE OPT-IN
+// ─────────────────────────────────────────
+
+model OptInLink {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  description String
+  redirectUrl String?
+  tagsToApply String[] @default([])
+  active      Boolean  @default(true)
+  usageCount  Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("opt_in_links")
+}
+
+// ─────────────────────────────────────────
+// AUDIT LOG
+// ─────────────────────────────────────────
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String
+  userEmail  String
+  action     String
+  entity     String
+  entityId   String?
+  dataBefore Json?
+  dataAfter  Json?
+  ip         String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([entity, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}

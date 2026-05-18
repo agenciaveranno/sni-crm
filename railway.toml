@@ -1,0 +1,28 @@
+[build]
+builder = "nixpacks"
+
+[[services]]
+name = "kotodama-api"
+source = "apps/api"
+
+[services.deploy]
+startCommand = "npm run start:prod"
+healthcheckPath = "/api/v1/health"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+
+[[services]]
+name = "kotodama-web"
+source = "apps/web"
+
+[services.deploy]
+startCommand = "npm run start"
+restartPolicyType = "ON_FAILURE"
+
+[[services]]
+name = "kotodama-worker"
+source = "apps/api"
+
+[services.deploy]
+startCommand = "npm run start:worker"
+restartPolicyType = "ON_FAILURE"
