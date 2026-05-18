@@ -21,6 +21,7 @@ import { ContactsService } from './contacts.service'
 import { AddContactTagsDto } from './dto/contact-tags.dto'
 import { CreateContactDto } from './dto/create-contact.dto'
 import { QueryContactsDto } from './dto/query-contacts.dto'
+import { SendMessageDto } from './dto/send-message.dto'
 import { UpdateContactDto } from './dto/update-contact.dto'
 
 @Controller('contacts')
@@ -101,5 +102,11 @@ export class ContactsController {
   @Get(':id/messages')
   messages(@Param('id') id: string) {
     return this.contacts.messages(id)
+  }
+
+  @RequirePermission('INBOX', 'SEND')
+  @Post(':id/messages')
+  sendMessage(@Param('id') id: string, @Body() dto: SendMessageDto) {
+    return this.contacts.sendMessage(id, dto)
   }
 }

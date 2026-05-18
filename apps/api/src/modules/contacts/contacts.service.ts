@@ -6,19 +6,29 @@ import {
 } from '@nestjs/common'
 import { normalizePhone } from '@kotodama/shared'
 import {
+  MessageDirection,
+  MessageStatus,
+  MessageType,
   OptInMethod,
   OptInStatus,
   Prisma,
 } from '@prisma/client'
 import { PrismaService } from '../../prisma/prisma.service'
+import { MetaService } from '../meta/meta.service'
+import { WhatsAppNumbersService } from '../whatsapp-numbers/whatsapp-numbers.service'
 import { AddContactTagsDto } from './dto/contact-tags.dto'
 import { CreateContactDto } from './dto/create-contact.dto'
 import { QueryContactsDto } from './dto/query-contacts.dto'
+import { SendMessageDto } from './dto/send-message.dto'
 import { UpdateContactDto } from './dto/update-contact.dto'
 
 @Injectable()
 export class ContactsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly meta: MetaService,
+    private readonly numbers: WhatsAppNumbersService,
+  ) {}
 
   async list(query: QueryContactsDto) {
     const where: Prisma.ContactWhereInput = {}
@@ -220,6 +230,64 @@ export class ContactsService {
       where: { contactId: id },
       orderBy: { receivedAt: 'desc' },
       take: 100,
+    })
+  }
+
+  async sendMessage(contactId: string, dto: SendMessageDto) {
+    const contact = await this.prisma.contact.findUnique({
+      where: { id: contactId },
+      select: { id: true, phone: true },
+    })
+    if (!contact) throw new NotFoundException('Contato não encontrado')
+
+    // Escolhe o número de envio: o do DTO ou o default ativo.
+    let numberId = dto.whatsAppNumberId
+    if (!numberId) {
+      const def = await this.prisma.whatsAppNumber.findFirst({
+        where: { status: 'ACTIVE', isDefault: true },
+        select: { id: true },
+      })
+      if (!def) {
+        const anyActive = await this.prisma.whatsAppNumber.findFirst({
+          where: { status: 'ACTIVE' },
+          select: { id: true },
+        })
+        if (!anyActive) {
+          throw new BadRequestException(
+            'Nenhum número WhatsApp ativo cadastrado',
+          )
+        }
+        numberId = anyActive.id
+      } else {
+        numberId = def.id
+      }
+    }
+
+    const number = await this.numbers.getInternal(numberId)
+    if (number.status !== 'ACTIVE') {
+      throw new BadRequestException('Número WhatsApp não está ativo')
+    }
+
+    // Meta espera E.164 sem o "+"
+    const toDigits = contact.phone.replace(/^\+/, '')
+    const { waMessageId } = await this.meta.sendText({
+      phoneNumberId: number.phoneNumberId,
+      accessToken: number.accessToken,
+      to: toDigits,
+      body: dto.body,
+    })
+
+    return this.prisma.inboxMessage.create({
+      data: {
+        direction: MessageDirection.OUTBOUND,
+        contactId: contact.id,
+        whatsAppNumberId: number.id,
+        waMessageId,
+        messageType: MessageType.TEXT,
+        content: { text: dto.body },
+        status: MessageStatus.SENT,
+        receivedAt: new Date(),
+      },
     })
   }
 
