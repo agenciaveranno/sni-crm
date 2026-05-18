@@ -5,8 +5,10 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common'
-import { Prisma, TemplateStatus } from '@prisma/client'
+import { Prisma, TemplateCategory, TemplateStatus } from '@prisma/client'
 import { PrismaService } from '../../prisma/prisma.service'
+import { MetaService, type MetaTemplate } from '../meta/meta.service'
+import { WhatsAppNumbersService } from '../whatsapp-numbers/whatsapp-numbers.service'
 import { CreateTemplateDto } from './dto/create-template.dto'
 import { UpdateTemplateDto } from './dto/update-template.dto'
 
@@ -34,7 +36,11 @@ export function extractTemplateVariables(
 export class TemplatesService {
   private readonly logger = new Logger(TemplatesService.name)
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly meta: MetaService,
+    private readonly numbers: WhatsAppNumbersService,
+  ) {}
 
   async list(numberId?: string) {
     return this.prisma.template.findMany({
@@ -133,13 +139,123 @@ export class TemplatesService {
   }
 
   /**
-   * Sincroniza status do template com a Meta. Implementação completa fica
-   * para a Fase 6 — por ora apenas log + atualização noop.
+   * Re-sincroniza um template específico puxando os dados da Meta.
+   * Encontra o template no DB, busca todos os templates da WABA dele, e
+   * faz upsert do match por nome (Meta não tem ID estável que a gente
+   * consiga usar como chave estrangeira — name é o identificador no
+   * escopo da WABA).
    */
   async sync(id: string) {
     const t = await this.findOne(id)
-    this.logger.log(`Sync da Meta solicitado para template ${id} (stub)`)
-    return t
+    const number = await this.numbers.getInternal(t.whatsAppNumberId)
+    const remote = await this.meta.listTemplates({
+      wabaId: number.wabaId,
+      accessToken: number.accessToken,
+    })
+    const match = remote.find((r) => r.name === t.name && r.language === t.language)
+    if (!match) {
+      throw new NotFoundException(
+        'Template não encontrado na Meta (foi removido lá?)',
+      )
+    }
+    await this.upsertFromMeta(t.whatsAppNumberId, match)
+    return this.findOne(id)
+  }
+
+  /**
+   * Puxa TODOS os templates da WABA de um número e upserts no DB.
+   * Útil pra trazer pra cá templates criados direto no WhatsApp Manager.
+   * Templates locais que não estão na Meta ficam intocados (assumimos que
+   * foram criados aqui e ainda não foram enviados pra aprovação).
+   */
+  async syncAllFromMeta(whatsAppNumberId: string) {
+    const number = await this.numbers.getInternal(whatsAppNumberId)
+    const remote = await this.meta.listTemplates({
+      wabaId: number.wabaId,
+      accessToken: number.accessToken,
+    })
+    let created = 0
+    let updated = 0
+    for (const r of remote) {
+      const result = await this.upsertFromMeta(whatsAppNumberId, r)
+      if (result === 'created') created++
+      else if (result === 'updated') updated++
+    }
+    await this.prisma.whatsAppNumber.update({
+      where: { id: whatsAppNumberId },
+      data: { lastSyncAt: new Date() },
+    })
+    this.logger.log(
+      `Sync de templates: ${created} criados, ${updated} atualizados, ${remote.length} no total da Meta`,
+    )
+    return { total: remote.length, created, updated }
+  }
+
+  private async upsertFromMeta(
+    whatsAppNumberId: string,
+    r: MetaTemplate,
+  ): Promise<'created' | 'updated' | 'unchanged'> {
+    const status = this.mapStatus(r.status)
+    const category = this.mapCategory(r.category)
+    const variables = extractTemplateVariables(r.components)
+
+    const existing = await this.prisma.template.findUnique({
+      where: {
+        whatsAppNumberId_name: { whatsAppNumberId, name: r.name },
+      },
+    })
+
+    const payload = {
+      whatsAppNumberId,
+      name: r.name,
+      externalId: r.id ?? null,
+      category,
+      language: r.language,
+      status,
+      components: r.components as unknown as Prisma.InputJsonValue,
+      variables: variables as unknown as Prisma.InputJsonValue,
+      rejectionReason: r.rejected_reason ?? null,
+    }
+
+    if (!existing) {
+      await this.prisma.template.create({ data: payload })
+      return 'created'
+    }
+    await this.prisma.template.update({
+      where: { id: existing.id },
+      data: payload,
+    })
+    return 'updated'
+  }
+
+  private mapStatus(s: string): TemplateStatus {
+    switch (s?.toUpperCase()) {
+      case 'APPROVED':
+        return TemplateStatus.APPROVED
+      case 'REJECTED':
+        return TemplateStatus.REJECTED
+      case 'PAUSED':
+        return TemplateStatus.PAUSED
+      case 'DISABLED':
+      case 'PENDING_DELETION':
+        return TemplateStatus.DISABLED
+      case 'PENDING':
+      case 'IN_APPEAL':
+      default:
+        return TemplateStatus.PENDING
+    }
+  }
+
+  private mapCategory(c: string): TemplateCategory {
+    switch (c?.toUpperCase()) {
+      case 'MARKETING':
+        return TemplateCategory.MARKETING
+      case 'AUTHENTICATION':
+        return TemplateCategory.AUTHENTICATION
+      case 'UTILITY':
+      default:
+        return TemplateCategory.UTILITY
+    }
   }
 
   private async ensureExists(id: string) {

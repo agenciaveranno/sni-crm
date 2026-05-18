@@ -1,13 +1,14 @@
 'use client'
 
-import { useQuery } from '@tanstack/react-query'
-import { FileText, Loader2, Plus } from 'lucide-react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { FileText, Loader2, Plus, RefreshCw } from 'lucide-react'
 import Link from 'next/link'
 import { useState } from 'react'
+import { toast } from 'sonner'
 import { PageHeader } from '@/components/layout/page-header'
 import { EmptyState } from '@/components/ui/empty-state'
 import { TemplateStatusBadge } from '@/components/ui/template-status-badge'
-import { api } from '@/lib/api'
+import { api, apiErrorMessage } from '@/lib/api'
 import { useAuthStore } from '@/store/auth'
 
 interface NumberOpt {
@@ -35,6 +36,7 @@ const CATEGORY_LABEL = {
 
 export default function TemplatesPage() {
   const can = useAuthStore((s) => s.hasPermission)
+  const qc = useQueryClient()
   const [numberId, setNumberId] = useState<string>('')
 
   const numbersQuery = useQuery({
@@ -51,6 +53,21 @@ export default function TemplatesPage() {
       })
       return res.data
     },
+  })
+
+  const syncAll = useMutation({
+    mutationFn: async (whatsAppNumberId: string) =>
+      (await api.post<{ total: number; created: number; updated: number }>(
+        '/templates/sync',
+        { whatsAppNumberId },
+      )).data,
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ['templates'] })
+      toast.success(
+        `Sincronizado: ${data.created} criado(s), ${data.updated} atualizado(s)`,
+      )
+    },
+    onError: (err) => toast.error(apiErrorMessage(err)),
   })
 
   const templates = templatesQuery.data ?? []
@@ -85,6 +102,21 @@ export default function TemplatesPage() {
               </option>
             ))}
           </select>
+          {numberId && can('SETTINGS_TEMPLATES', 'EDIT') && (
+            <button
+              type="button"
+              className="btn-ghost text-sm sm:ml-auto"
+              onClick={() => syncAll.mutate(numberId)}
+              disabled={syncAll.isPending}
+            >
+              {syncAll.isPending ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="h-3.5 w-3.5" />
+              )}
+              Sincronizar com Meta
+            </button>
+          )}
         </div>
       </div>
 

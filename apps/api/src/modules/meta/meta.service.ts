@@ -2,9 +2,20 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
 import axios, { AxiosError } from 'axios'
 
+export interface MetaTemplate {
+  id?: string
+  name: string
+  language: string
+  status: string
+  category: string
+  components: Array<Record<string, unknown>>
+  rejected_reason?: string
+}
+
 /**
- * Cliente HTTP para a Meta Cloud API (Graph). Por enquanto só envio de texto;
- * templates/mídia entram em slices futuros.
+ * Cliente HTTP para a Meta Cloud API (Graph). Por enquanto: envio de texto
+ * + leitura de message templates do WABA. Mídia e outras features entram
+ * em slices futuros.
  */
 @Injectable()
 export class MetaService {
@@ -56,6 +67,46 @@ export class MetaService {
         const code = metaError?.code ?? err.response.status
         this.logger.warn(
           `Meta sendText falhou: code=${code} status=${err.response.status} message="${message}"`,
+        )
+        throw new BadRequestException(`Meta: ${message}`)
+      }
+      throw err
+    }
+  }
+
+  /**
+   * Lista todos os message templates de uma WABA, seguindo paginação
+   * cursor-based da Meta até o fim. Usa `fields` explícitos pra trazer
+   * components+status sem precisar de uma segunda chamada por template.
+   */
+  async listTemplates(args: {
+    wabaId: string
+    accessToken: string
+  }): Promise<MetaTemplate[]> {
+    const fields =
+      'id,name,language,status,category,components,rejected_reason'
+    let url: string | null = `https://graph.facebook.com/${this.graphVersion}/${args.wabaId}/message_templates?fields=${fields}&limit=200`
+    const out: MetaTemplate[] = []
+
+    try {
+      while (url) {
+        const res: { data: { data?: MetaTemplate[]; paging?: { next?: string } } } =
+          await axios.get(url, {
+            headers: { Authorization: `Bearer ${args.accessToken}` },
+            timeout: 20000,
+          })
+        const page = res.data?.data ?? []
+        out.push(...page)
+        url = res.data?.paging?.next ?? null
+      }
+      return out
+    } catch (err) {
+      if (err instanceof AxiosError && err.response) {
+        const metaError = (err.response.data as { error?: { message?: string; code?: number } })?.error
+        const message = metaError?.message ?? err.message
+        const code = metaError?.code ?? err.response.status
+        this.logger.warn(
+          `Meta listTemplates falhou: code=${code} message="${message}"`,
         )
         throw new BadRequestException(`Meta: ${message}`)
       }

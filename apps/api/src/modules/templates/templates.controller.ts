@@ -52,4 +52,10 @@ export class TemplatesController {
   sync(@Param('id') id: string) {
     return this.templates.sync(id)
   }
+
+  @RequirePermission('SETTINGS_TEMPLATES', 'EDIT')
+  @Post('sync')
+  syncAll(@Body() body: { whatsAppNumberId: string }) {
+    return this.templates.syncAllFromMeta(body.whatsAppNumberId)
+  }
 }
