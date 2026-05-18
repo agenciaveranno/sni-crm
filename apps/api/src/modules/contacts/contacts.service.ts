@@ -270,6 +270,73 @@ export class ContactsService {
 
     // Meta espera E.164 sem o "+"
     const toDigits = contact.phone.replace(/^\+/, '')
+
+    // Modo template: aceita templateId no DTO e usa sendTemplate.
+    if (dto.templateId) {
+      const template = await this.prisma.template.findUnique({
+        where: { id: dto.templateId },
+        select: {
+          id: true,
+          name: true,
+          language: true,
+          status: true,
+          whatsAppNumberId: true,
+          components: true,
+        },
+      })
+      if (!template) throw new NotFoundException('Template não encontrado')
+      if (template.status !== 'APPROVED') {
+        throw new BadRequestException(
+          'Só é possível enviar templates com status APPROVED',
+        )
+      }
+      if (template.whatsAppNumberId !== number.id) {
+        throw new BadRequestException(
+          'Template pertence a outro número WhatsApp',
+        )
+      }
+
+      const { waMessageId } = await this.meta.sendTemplate({
+        phoneNumberId: number.phoneNumberId,
+        accessToken: number.accessToken,
+        to: toDigits,
+        templateName: template.name,
+        language: template.language,
+        headerParams: dto.headerParams,
+        bodyParams: dto.bodyParams,
+        buttonParams: dto.buttonParams?.map((p) => ({
+          index: Number(p.index),
+          value: p.value,
+        })),
+      })
+
+      return this.prisma.inboxMessage.create({
+        data: {
+          direction: MessageDirection.OUTBOUND,
+          contactId: contact.id,
+          whatsAppNumberId: number.id,
+          waMessageId,
+          messageType: MessageType.TEMPLATE,
+          content: {
+            templateId: template.id,
+            templateName: template.name,
+            headerParams: dto.headerParams ?? [],
+            bodyParams: dto.bodyParams ?? [],
+            buttonParams: (dto.buttonParams ?? []).map((p) => ({
+              index: p.index,
+              value: p.value,
+            })),
+          } as Prisma.InputJsonValue,
+          status: MessageStatus.SENT,
+          receivedAt: new Date(),
+        },
+      })
+    }
+
+    // Modo texto livre (free-form, dentro da janela 24h da Meta).
+    if (!dto.body?.trim()) {
+      throw new BadRequestException('body ou templateId é obrigatório')
+    }
     const { waMessageId } = await this.meta.sendText({
       phoneNumberId: number.phoneNumberId,
       accessToken: number.accessToken,

@@ -5,12 +5,14 @@ import {
   AlertCircle,
   Check,
   CheckCheck,
+  FileText,
   Inbox,
   Loader2,
   MessageSquare,
   Send,
+  X,
 } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { PageHeader } from '@/components/layout/page-header'
 import { EmptyState } from '@/components/ui/empty-state'
@@ -62,10 +64,55 @@ function preview(content: Record<string, unknown>, type: string): string {
   return type
 }
 
+interface TemplateOption {
+  id: string
+  name: string
+  language: string
+  status: string
+  whatsAppNumber: { id: string }
+  components: MetaComponent[]
+}
+
+interface MetaComponent {
+  type: string
+  format?: string
+  text?: string
+  buttons?: Array<{ type: string; text?: string; url?: string }>
+}
+
+function countVars(text: string | undefined): number {
+  if (!text) return 0
+  return new Set((text.match(/\{\{\s*\d+\s*\}\}/g) ?? []).map((s) => s)).size
+}
+
+function templateInputs(template: TemplateOption) {
+  let headerVarCount = 0
+  let bodyVarCount = 0
+  const buttonVars: Array<{ index: number; url: string }> = []
+  for (const c of template.components ?? []) {
+    const t = c.type?.toUpperCase()
+    if (t === 'HEADER' && c.format?.toUpperCase() === 'TEXT') {
+      headerVarCount = countVars(c.text)
+    }
+    if (t === 'BODY') {
+      bodyVarCount = countVars(c.text)
+    }
+    if (t === 'BUTTONS') {
+      ;(c.buttons ?? []).forEach((b, idx) => {
+        if (b.type?.toUpperCase() === 'URL' && (b.url ?? '').includes('{{')) {
+          buttonVars.push({ index: idx, url: b.url ?? '' })
+        }
+      })
+    }
+  }
+  return { headerVarCount, bodyVarCount, buttonVars }
+}
+
 export default function InboxPage() {
   const qc = useQueryClient()
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
+  const [templateOpen, setTemplateOpen] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const conversations = useQuery({
@@ -92,6 +139,25 @@ export default function InboxPage() {
       setDraft('')
       qc.invalidateQueries({ queryKey: ['inbox', 'messages', selectedId] })
       qc.invalidateQueries({ queryKey: ['inbox', 'conversations'] })
+    },
+    onError: (err) => toast.error(apiErrorMessage(err)),
+  })
+
+  const sendTemplate = useMutation({
+    mutationFn: async (args: {
+      templateId: string
+      headerParams: string[]
+      bodyParams: string[]
+      buttonParams: Array<{ index: string; value: string }>
+    }) => {
+      if (!selectedId) throw new Error('Selecione um contato')
+      await api.post(`/contacts/${selectedId}/messages`, args)
+    },
+    onSuccess: () => {
+      setTemplateOpen(false)
+      qc.invalidateQueries({ queryKey: ['inbox', 'messages', selectedId] })
+      qc.invalidateQueries({ queryKey: ['inbox', 'conversations'] })
+      toast.success('Template enviado')
     },
     onError: (err) => toast.error(apiErrorMessage(err)),
   })
@@ -220,6 +286,14 @@ export default function InboxPage() {
                   onSubmit={handleSubmit}
                   className="flex items-end gap-2 border-t border-border px-5 py-3"
                 >
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={() => setTemplateOpen(true)}
+                    title="Enviar template aprovado pela Meta (necessário fora da janela 24h)"
+                  >
+                    <FileText className="h-4 w-4" />
+                  </button>
                   <textarea
                     value={draft}
                     onChange={(e) => setDraft(e.target.value)}
@@ -256,6 +330,182 @@ export default function InboxPage() {
           </section>
         </div>
       )}
+
+      {templateOpen && selectedId && (
+        <TemplateSendDialog
+          contactId={selectedId}
+          onClose={() => setTemplateOpen(false)}
+          onSend={(args) => sendTemplate.mutate(args)}
+          isPending={sendTemplate.isPending}
+        />
+      )}
+    </div>
+  )
+}
+
+function TemplateSendDialog({
+  contactId,
+  onClose,
+  onSend,
+  isPending,
+}: {
+  contactId: string
+  onClose: () => void
+  onSend: (args: {
+    templateId: string
+    headerParams: string[]
+    bodyParams: string[]
+    buttonParams: Array<{ index: string; value: string }>
+  }) => void
+  isPending: boolean
+}) {
+  void contactId // reservado pra filtrar por número do contato no futuro
+  const [templateId, setTemplateId] = useState<string>('')
+  const [headerParams, setHeaderParams] = useState<string[]>([])
+  const [bodyParams, setBodyParams] = useState<string[]>([])
+  const [buttonValues, setButtonValues] = useState<string[]>([])
+
+  const templatesQuery = useQuery({
+    queryKey: ['templates', 'approved'],
+    queryFn: async () =>
+      (await api.get<TemplateOption[]>('/templates')).data.filter(
+        (t) => t.status === 'APPROVED',
+      ),
+  })
+
+  const selected = templatesQuery.data?.find((t) => t.id === templateId)
+  const inputs = useMemo(
+    () => (selected ? templateInputs(selected) : null),
+    [selected],
+  )
+
+  useEffect(() => {
+    if (!inputs) return
+    setHeaderParams(Array(inputs.headerVarCount).fill(''))
+    setBodyParams(Array(inputs.bodyVarCount).fill(''))
+    setButtonValues(Array(inputs.buttonVars.length).fill(''))
+  }, [inputs])
+
+  const handleSend = () => {
+    if (!templateId || !inputs) return
+    onSend({
+      templateId,
+      headerParams,
+      bodyParams,
+      buttonParams: inputs.buttonVars.map((bv, i) => ({
+        index: String(bv.index),
+        value: buttonValues[i] ?? '',
+      })),
+    })
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="card w-full max-w-lg p-5">
+        <div className="mb-4 flex items-center justify-between">
+          <h3 className="text-base font-semibold text-ink">
+            Enviar template
+          </h3>
+          <button type="button" onClick={onClose} className="btn-ghost p-1">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <label className="label">Template aprovado</label>
+        <select
+          className="input mb-4"
+          value={templateId}
+          onChange={(e) => setTemplateId(e.target.value)}
+        >
+          <option value="">Selecione…</option>
+          {(templatesQuery.data ?? []).map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.name} ({t.language})
+            </option>
+          ))}
+        </select>
+
+        {selected && inputs && (
+          <div className="space-y-3">
+            {inputs.headerVarCount > 0 &&
+              Array.from({ length: inputs.headerVarCount }).map((_, i) => (
+                <div key={`h-${i}`}>
+                  <label className="label">
+                    Header <code>&#123;&#123;{i + 1}&#125;&#125;</code>
+                  </label>
+                  <input
+                    className="input"
+                    value={headerParams[i] ?? ''}
+                    onChange={(e) =>
+                      setHeaderParams((prev) => {
+                        const next = [...prev]
+                        next[i] = e.target.value
+                        return next
+                      })
+                    }
+                  />
+                </div>
+              ))}
+            {inputs.bodyVarCount > 0 &&
+              Array.from({ length: inputs.bodyVarCount }).map((_, i) => (
+                <div key={`b-${i}`}>
+                  <label className="label">
+                    Body <code>&#123;&#123;{i + 1}&#125;&#125;</code>
+                  </label>
+                  <input
+                    className="input"
+                    value={bodyParams[i] ?? ''}
+                    onChange={(e) =>
+                      setBodyParams((prev) => {
+                        const next = [...prev]
+                        next[i] = e.target.value
+                        return next
+                      })
+                    }
+                  />
+                </div>
+              ))}
+            {inputs.buttonVars.map((bv, i) => (
+              <div key={`btn-${i}`}>
+                <label className="label">
+                  Botão {bv.index + 1} — variável da URL
+                </label>
+                <input
+                  className="input font-mono text-xs"
+                  placeholder="valor que substitui o {{1}} da URL"
+                  value={buttonValues[i] ?? ''}
+                  onChange={(e) =>
+                    setButtonValues((prev) => {
+                      const next = [...prev]
+                      next[i] = e.target.value
+                      return next
+                    })
+                  }
+                />
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="mt-5 flex justify-end gap-2">
+          <button type="button" className="btn-ghost" onClick={onClose}>
+            Cancelar
+          </button>
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={handleSend}
+            disabled={!templateId || isPending}
+          >
+            {isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Send className="h-4 w-4" />
+            )}
+            Enviar
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

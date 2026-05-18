@@ -26,6 +26,92 @@ export class MetaService {
     this.graphVersion = config.get<string>('META_GRAPH_VERSION', 'v22.0')
   }
 
+  async sendTemplate(args: {
+    phoneNumberId: string
+    accessToken: string
+    /** E.164 sem o "+" */
+    to: string
+    templateName: string
+    language: string
+    /** Valores na ordem das variáveis {{1}}, {{2}}, ... */
+    headerParams?: string[]
+    bodyParams?: string[]
+    /**
+     * Botões dinâmicos (URL com {{1}}). Cada item informa o índice do
+     * botão na lista e o valor da variável de URL.
+     */
+    buttonParams?: Array<{ index: number; value: string }>
+  }): Promise<{ waMessageId: string }> {
+    const url = `https://graph.facebook.com/${this.graphVersion}/${args.phoneNumberId}/messages`
+    const components: Array<Record<string, unknown>> = []
+    if (args.headerParams?.length) {
+      components.push({
+        type: 'header',
+        parameters: args.headerParams.map((v) => ({ type: 'text', text: v })),
+      })
+    }
+    if (args.bodyParams?.length) {
+      components.push({
+        type: 'body',
+        parameters: args.bodyParams.map((v) => ({ type: 'text', text: v })),
+      })
+    }
+    if (args.buttonParams?.length) {
+      for (const bp of args.buttonParams) {
+        components.push({
+          type: 'button',
+          sub_type: 'url',
+          index: String(bp.index),
+          parameters: [{ type: 'text', text: bp.value }],
+        })
+      }
+    }
+
+    try {
+      const res = await axios.post(
+        url,
+        {
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to: args.to,
+          type: 'template',
+          template: {
+            name: args.templateName,
+            language: { code: args.language },
+            components,
+          },
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${args.accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 15000,
+        },
+      )
+      const id = res.data?.messages?.[0]?.id
+      if (!id) {
+        this.logger.error(
+          `sendTemplate resposta inesperada: ${JSON.stringify(res.data)}`,
+        )
+        throw new BadRequestException('Resposta inesperada da Meta')
+      }
+      return { waMessageId: id }
+    } catch (err) {
+      if (err instanceof AxiosError && err.response) {
+        const metaError = (err.response.data as { error?: { message?: string; code?: number; error_user_msg?: string } })?.error
+        const message =
+          metaError?.error_user_msg ?? metaError?.message ?? err.message
+        const code = metaError?.code ?? err.response.status
+        this.logger.warn(
+          `Meta sendTemplate falhou: code=${code} message="${message}"`,
+        )
+        throw new BadRequestException(`Meta: ${message}`)
+      }
+      throw err
+    }
+  }
+
   async sendText(args: {
     phoneNumberId: string
     accessToken: string
