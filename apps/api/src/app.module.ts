@@ -7,6 +7,7 @@ import { PrismaModule } from './prisma/prisma.module'
 import { HealthModule } from './modules/health/health.module'
 import { AuthModule } from './modules/auth/auth.module'
 import { UsersModule } from './modules/users/users.module'
+import { TagsModule } from './modules/tags/tags.module'
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard'
 import { PermissionsGuard } from './common/guards/permissions.guard'
 
@@ -20,6 +21,7 @@ import { PermissionsGuard } from './common/guards/permissions.guard'
     HealthModule,
     AuthModule,
     UsersModule,
+    TagsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
