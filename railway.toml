@@ -4,6 +4,7 @@ buildCommand = "npm run build --workspace=@kotodama/api"
 watchPatterns = ["/apps/api/**", "/packages/shared/**", "/package-lock.json"]
 
 [deploy]
+preDeployCommand = "npm run db:migrate -w @kotodama/api && npm run db:seed -w @kotodama/api"
 startCommand = "npm run start --workspace=@kotodama/api"
 healthcheckPath = "/api/v1/health"
 healthcheckTimeout = 30
