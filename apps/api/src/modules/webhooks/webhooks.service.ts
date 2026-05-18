@@ -49,21 +49,40 @@ export class WebhooksService {
 
   isSignatureValid(rawBody: Buffer, header: string): boolean {
     if (!this.appSecret) return true // modo dev — vide warn no construtor
-    if (!header.startsWith('sha256=')) return false
+    if (!header) {
+      this.logger.warn('POST recebido sem X-Hub-Signature-256')
+      return false
+    }
+    if (!header.startsWith('sha256=')) {
+      this.logger.warn(`X-Hub-Signature-256 com prefixo inesperado: ${header.slice(0, 16)}`)
+      return false
+    }
     const expected = crypto
       .createHmac('sha256', this.appSecret)
       .update(rawBody)
       .digest('hex')
     const received = header.slice('sha256='.length)
-    if (expected.length !== received.length) return false
-    return crypto.timingSafeEqual(
+    if (expected.length !== received.length) {
+      this.logger.warn('Assinatura com tamanho inesperado')
+      return false
+    }
+    const ok = crypto.timingSafeEqual(
       Buffer.from(expected, 'hex'),
       Buffer.from(received, 'hex'),
     )
+    if (!ok) {
+      this.logger.warn(
+        'Assinatura inválida — META_APP_SECRET no Railway provavelmente não bate com App Secret do Meta',
+      )
+    }
+    return ok
   }
 
   async handleEvent(payload: unknown): Promise<void> {
     const entries = (payload as { entry?: MetaWebhookEntry[] })?.entry ?? []
+    this.logger.log(
+      `Webhook recebido: ${entries.length} entry(ies), object=${(payload as { object?: string })?.object ?? '?'}`,
+    )
     for (const entry of entries) {
       for (const change of entry.changes ?? []) {
         if (change.field !== 'messages') continue
@@ -135,6 +154,9 @@ export class WebhooksService {
           : new Date(),
       },
     })
+    this.logger.log(
+      `Mensagem inbound persistida: waMessageId=${m.id} type=${m.type} contactId=${contact.id}`,
+    )
   }
 
   private mapMessageType(t: string | undefined): MessageType {

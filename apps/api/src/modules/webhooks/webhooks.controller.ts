@@ -42,7 +42,11 @@ export class WebhooksController {
     @Body() body: unknown,
   ): Promise<{ received: true }> {
     const signature = req.header('x-hub-signature-256') ?? ''
+    const userAgent = req.header('user-agent') ?? '?'
     const raw = req.rawBody
+    this.logger.log(
+      `POST /webhooks/meta chegou: ua=${userAgent} bytes=${raw?.length ?? 0} signature=${signature ? 'yes' : 'no'}`,
+    )
     if (!raw) {
       throw new BadRequestException('Raw body indisponível')
     }
