@@ -291,6 +291,70 @@ export class ContactsService {
     })
   }
 
+  /**
+   * Mescla source em target: move mensagens e tags pro target, depois deleta
+   * source. Útil pra duplicados (ex: mesmo número em formatos diferentes
+   * antes do fix do BR9).
+   */
+  async mergeFrom(targetId: string, sourceId: string) {
+    if (targetId === sourceId) {
+      throw new BadRequestException('Source e target são o mesmo contato')
+    }
+    const [target, source] = await Promise.all([
+      this.prisma.contact.findUnique({ where: { id: targetId } }),
+      this.prisma.contact.findUnique({ where: { id: sourceId } }),
+    ])
+    if (!target) throw new NotFoundException('Contato target não encontrado')
+    if (!source) throw new NotFoundException('Contato source não encontrado')
+
+    return this.prisma.$transaction(async (tx) => {
+      const movedMessages = await tx.inboxMessage.updateMany({
+        where: { contactId: sourceId },
+        data: { contactId: targetId },
+      })
+
+      const sourceTags = await tx.contactTag.findMany({
+        where: { contactId: sourceId },
+      })
+      let movedTags = 0
+      for (const ct of sourceTags) {
+        const exists = await tx.contactTag.findUnique({
+          where: { contactId_tagId: { contactId: targetId, tagId: ct.tagId } },
+        })
+        if (!exists) {
+          await tx.contactTag.create({
+            data: {
+              contactId: targetId,
+              tagId: ct.tagId,
+              assignedBy: ct.assignedBy,
+            },
+          })
+          movedTags++
+        }
+      }
+      await tx.contactTag.deleteMany({ where: { contactId: sourceId } })
+
+      // Move campaign recipients também
+      const movedRecipients = await tx.campaignRecipient.updateMany({
+        where: { contactId: sourceId },
+        data: { contactId: targetId },
+      })
+
+      await tx.contact.delete({ where: { id: sourceId } })
+
+      return {
+        merged: true,
+        target: { id: target.id, phone: target.phone, name: target.name },
+        source: { id: source.id, phone: source.phone, name: source.name },
+        moved: {
+          messages: movedMessages.count,
+          tags: movedTags,
+          recipients: movedRecipients.count,
+        },
+      }
+    })
+  }
+
   async exportCsv(query: QueryContactsDto) {
     const where: Prisma.ContactWhereInput = {}
     if (query.search) {

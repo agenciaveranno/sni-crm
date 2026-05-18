@@ -109,4 +109,10 @@ export class ContactsController {
   sendMessage(@Param('id') id: string, @Body() dto: SendMessageDto) {
     return this.contacts.sendMessage(id, dto)
   }
+
+  @RequirePermission('CONTACTS', 'DELETE')
+  @Post(':id/merge-from/:sourceId')
+  mergeFrom(@Param('id') targetId: string, @Param('sourceId') sourceId: string) {
+    return this.contacts.mergeFrom(targetId, sourceId)
+  }
 }

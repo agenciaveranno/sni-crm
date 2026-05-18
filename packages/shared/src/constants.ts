@@ -86,6 +86,19 @@ export function normalizePhone(raw: string): string | null {
     }
   }
   if (digits.length < 8 || digits.length > 16) return null
+
+  // BR9: Meta às vezes envia wa_id no formato pré-2012 (+55 DDD XXXXXXXX),
+  // sem o "9" obrigatório de celular. Detecta esse caso (13 chars no
+  // total = 12 dígitos depois do +, primeiro dígito local 6-9 indicando
+  // mobile) e insere o "9".
+  if (digits.startsWith('+55') && digits.length === 13) {
+    const localStart = 5 // pula '+55' + 2 dígitos do DDD
+    const firstLocal = digits[localStart]
+    if (firstLocal === '6' || firstLocal === '7' || firstLocal === '8' || firstLocal === '9') {
+      digits = digits.slice(0, localStart) + '9' + digits.slice(localStart)
+    }
+  }
+
   return digits
 }
 
