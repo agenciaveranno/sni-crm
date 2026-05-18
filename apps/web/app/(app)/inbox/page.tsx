@@ -1,7 +1,15 @@
 'use client'
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Inbox, Loader2, MessageSquare, Send } from 'lucide-react'
+import {
+  AlertCircle,
+  Check,
+  CheckCheck,
+  Inbox,
+  Loader2,
+  MessageSquare,
+  Send,
+} from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { PageHeader } from '@/components/layout/page-header'
@@ -266,16 +274,35 @@ function MessageBubble({ message }: { message: Message }) {
         )}
       >
         <p className="whitespace-pre-wrap break-words">{body}</p>
-        <p
+        <div
           className={cn(
-            'mt-1 text-[10px]',
-            outbound ? 'text-white/70' : 'text-muted-foreground',
+            'mt-1 flex items-center gap-1 text-[10px]',
+            outbound ? 'justify-end text-white/70' : 'text-muted-foreground',
           )}
         >
-          {formatRelative(message.receivedAt)}
-          {outbound && message.status ? ` • ${message.status.toLowerCase()}` : ''}
-        </p>
+          <span>{formatRelative(message.receivedAt)}</span>
+          {outbound && <StatusIcon status={message.status} />}
+        </div>
       </div>
     </div>
   )
+}
+
+function StatusIcon({ status }: { status: string }) {
+  switch (status) {
+    case 'SENT':
+      return <Check className="h-3 w-3" aria-label="Enviada" />
+    case 'DELIVERED':
+      return <CheckCheck className="h-3 w-3" aria-label="Entregue" />
+    case 'READ':
+      return (
+        <CheckCheck className="h-3 w-3 text-sky-300" aria-label="Lida" />
+      )
+    case 'FAILED':
+      return (
+        <AlertCircle className="h-3 w-3 text-red-300" aria-label="Falhou" />
+      )
+    default:
+      return null
+  }
 }

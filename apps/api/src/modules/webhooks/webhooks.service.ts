@@ -12,6 +12,7 @@ type MetaWebhookEntry = {
       metadata?: { phone_number_id?: string }
       contacts?: Array<{ profile?: { name?: string }; wa_id?: string }>
       messages?: Array<MetaIncomingMessage>
+      statuses?: Array<MetaStatusUpdate>
     }
   }>
 }
@@ -22,6 +23,13 @@ type MetaIncomingMessage = {
   type?: string
   timestamp?: string
   text?: { body?: string }
+}
+
+type MetaStatusUpdate = {
+  id?: string
+  status?: string
+  timestamp?: string
+  recipient_id?: string
 }
 
 @Injectable()
@@ -110,7 +118,42 @@ export class WebhooksService {
         for (const m of value.messages ?? []) {
           await this.persistIncoming(number.id, m, contactsByWaId.get(m.from ?? ''))
         }
+
+        for (const s of value.statuses ?? []) {
+          await this.persistStatus(s)
+        }
       }
+    }
+  }
+
+  private async persistStatus(s: MetaStatusUpdate): Promise<void> {
+    if (!s.id || !s.status) return
+    const mapped = this.mapStatus(s.status)
+    if (!mapped) {
+      this.logger.warn(`Status desconhecido recebido: ${s.status}`)
+      return
+    }
+    const result = await this.prisma.inboxMessage.updateMany({
+      where: { waMessageId: s.id },
+      data: { status: mapped },
+    })
+    this.logger.log(
+      `Status update: waMessageId=${s.id} status=${s.status} (matched=${result.count})`,
+    )
+  }
+
+  private mapStatus(s: string): MessageStatus | null {
+    switch (s) {
+      case 'sent':
+        return MessageStatus.SENT
+      case 'delivered':
+        return MessageStatus.DELIVERED
+      case 'read':
+        return MessageStatus.READ
+      case 'failed':
+        return MessageStatus.FAILED
+      default:
+        return null
     }
   }
 
