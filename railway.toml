@@ -1,28 +1,10 @@
 [build]
 builder = "nixpacks"
+buildCommand = "npm run build --workspace=@kotodama/api"
+watchPatterns = ["/apps/api/**", "/packages/shared/**", "/package-lock.json"]
 
-[[services]]
-name = "kotodama-api"
-source = "apps/api"
-
-[services.deploy]
-startCommand = "npm run start:prod"
+[deploy]
+startCommand = "npm run start --workspace=@kotodama/api"
 healthcheckPath = "/api/v1/health"
 healthcheckTimeout = 30
-restartPolicyType = "ON_FAILURE"
-
-[[services]]
-name = "kotodama-web"
-source = "apps/web"
-
-[services.deploy]
-startCommand = "npm run start"
-restartPolicyType = "ON_FAILURE"
-
-[[services]]
-name = "kotodama-worker"
-source = "apps/api"
-
-[services.deploy]
-startCommand = "npm run start:worker"
 restartPolicyType = "ON_FAILURE"
