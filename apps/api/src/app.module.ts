@@ -11,6 +11,7 @@ import { UsersModule } from './modules/users/users.module'
 import { TagsModule } from './modules/tags/tags.module'
 import { ContactsModule } from './modules/contacts/contacts.module'
 import { WhatsAppNumbersModule } from './modules/whatsapp-numbers/whatsapp-numbers.module'
+import { InboxModule } from './modules/inbox/inbox.module'
 import { MetaModule } from './modules/meta/meta.module'
 import { TemplatesModule } from './modules/templates/templates.module'
 import { WebhooksModule } from './modules/webhooks/webhooks.module'
@@ -33,6 +34,7 @@ import { PermissionsGuard } from './common/guards/permissions.guard'
     WhatsAppNumbersModule,
     TemplatesModule,
     MetaModule,
+    InboxModule,
     WebhooksModule,
   ],
   providers: [
