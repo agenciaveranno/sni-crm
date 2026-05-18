@@ -8,6 +8,7 @@ import { HealthModule } from './modules/health/health.module'
 import { AuthModule } from './modules/auth/auth.module'
 import { UsersModule } from './modules/users/users.module'
 import { TagsModule } from './modules/tags/tags.module'
+import { ContactsModule } from './modules/contacts/contacts.module'
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard'
 import { PermissionsGuard } from './common/guards/permissions.guard'
 
@@ -22,6 +23,7 @@ import { PermissionsGuard } from './common/guards/permissions.guard'
     AuthModule,
     UsersModule,
     TagsModule,
+    ContactsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
