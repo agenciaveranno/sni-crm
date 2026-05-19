@@ -16,6 +16,7 @@ import { InboxModule } from './modules/inbox/inbox.module'
 import { MetaModule } from './modules/meta/meta.module'
 import { TemplatesModule } from './modules/templates/templates.module'
 import { CampaignsModule } from './modules/campaigns/campaigns.module'
+import { ImportsModule } from './modules/imports/imports.module'
 import { WebhooksModule } from './modules/webhooks/webhooks.module'
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard'
 import { PermissionsGuard } from './common/guards/permissions.guard'
@@ -39,6 +40,7 @@ import { PermissionsGuard } from './common/guards/permissions.guard'
     MetaModule,
     InboxModule,
     CampaignsModule,
+    ImportsModule,
     WebhooksModule,
   ],
   providers: [
