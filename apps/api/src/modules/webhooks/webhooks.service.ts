@@ -30,6 +30,12 @@ type MetaStatusUpdate = {
   status?: string
   timestamp?: string
   recipient_id?: string
+  errors?: Array<{
+    code?: number
+    title?: string
+    message?: string
+    error_data?: { details?: string }
+  }>
 }
 
 @Injectable()
@@ -140,6 +146,60 @@ export class WebhooksService {
     this.logger.log(
       `Status update: waMessageId=${s.id} status=${s.status} (matched=${result.count})`,
     )
+
+    await this.applyCampaignRecipientStatus(s)
+  }
+
+  private async applyCampaignRecipientStatus(
+    s: MetaStatusUpdate,
+  ): Promise<void> {
+    const recipient = await this.prisma.campaignRecipient.findFirst({
+      where: { waMessageId: s.id },
+      select: { id: true, campaignId: true, status: true },
+    })
+    if (!recipient) return
+
+    if (s.status === 'delivered' && recipient.status !== 'DELIVERED') {
+      await this.prisma.$transaction([
+        this.prisma.campaignRecipient.update({
+          where: { id: recipient.id },
+          data: { status: 'DELIVERED', deliveredAt: new Date() },
+        }),
+        this.prisma.campaign.update({
+          where: { id: recipient.campaignId },
+          data: { deliveredCount: { increment: 1 } },
+        }),
+      ])
+    } else if (s.status === 'read' && recipient.status !== 'READ') {
+      await this.prisma.$transaction([
+        this.prisma.campaignRecipient.update({
+          where: { id: recipient.id },
+          data: { status: 'READ', readAt: new Date() },
+        }),
+        this.prisma.campaign.update({
+          where: { id: recipient.campaignId },
+          data: { readCount: { increment: 1 } },
+        }),
+      ])
+    } else if (s.status === 'failed' && recipient.status !== 'FAILED') {
+      const errMessage =
+        s.errors?.[0]?.title ?? s.errors?.[0]?.message ?? 'falha desconhecida'
+      await this.prisma.$transaction([
+        this.prisma.campaignRecipient.update({
+          where: { id: recipient.id },
+          data: {
+            status: 'FAILED',
+            failedAt: new Date(),
+            errorCode: s.errors?.[0]?.code?.toString() ?? null,
+            errorMessage: errMessage.slice(0, 1000),
+          },
+        }),
+        this.prisma.campaign.update({
+          where: { id: recipient.campaignId },
+          data: { failedCount: { increment: 1 } },
+        }),
+      ])
+    }
   }
 
   private mapStatus(s: string): MessageStatus | null {

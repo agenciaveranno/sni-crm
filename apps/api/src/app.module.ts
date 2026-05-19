@@ -5,6 +5,7 @@ import { APP_GUARD } from '@nestjs/core'
 
 import { PrismaModule } from './prisma/prisma.module'
 import { CryptoModule } from './common/crypto/crypto.module'
+import { QueueModule } from './queue/queue.module'
 import { HealthModule } from './modules/health/health.module'
 import { AuthModule } from './modules/auth/auth.module'
 import { UsersModule } from './modules/users/users.module'
@@ -14,6 +15,7 @@ import { WhatsAppNumbersModule } from './modules/whatsapp-numbers/whatsapp-numbe
 import { InboxModule } from './modules/inbox/inbox.module'
 import { MetaModule } from './modules/meta/meta.module'
 import { TemplatesModule } from './modules/templates/templates.module'
+import { CampaignsModule } from './modules/campaigns/campaigns.module'
 import { WebhooksModule } from './modules/webhooks/webhooks.module'
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard'
 import { PermissionsGuard } from './common/guards/permissions.guard'
@@ -26,6 +28,7 @@ import { PermissionsGuard } from './common/guards/permissions.guard'
     ]),
     PrismaModule,
     CryptoModule,
+    QueueModule,
     HealthModule,
     AuthModule,
     UsersModule,
@@ -35,6 +38,7 @@ import { PermissionsGuard } from './common/guards/permissions.guard'
     TemplatesModule,
     MetaModule,
     InboxModule,
+    CampaignsModule,
     WebhooksModule,
   ],
   providers: [
