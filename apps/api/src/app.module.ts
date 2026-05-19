@@ -17,6 +17,9 @@ import { MetaModule } from './modules/meta/meta.module'
 import { TemplatesModule } from './modules/templates/templates.module'
 import { CampaignsModule } from './modules/campaigns/campaigns.module'
 import { ImportsModule } from './modules/imports/imports.module'
+import { AuditLogModule } from './modules/audit-log/audit-log.module'
+import { OptInLinksModule } from './modules/opt-in-links/opt-in-links.module'
+import { AutomationsModule } from './modules/automations/automations.module'
 import { WebhooksModule } from './modules/webhooks/webhooks.module'
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard'
 import { PermissionsGuard } from './common/guards/permissions.guard'
@@ -41,6 +44,9 @@ import { PermissionsGuard } from './common/guards/permissions.guard'
     InboxModule,
     CampaignsModule,
     ImportsModule,
+    AuditLogModule,
+    OptInLinksModule,
+    AutomationsModule,
     WebhooksModule,
   ],
   providers: [

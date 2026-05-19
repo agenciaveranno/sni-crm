@@ -1,9 +1,16 @@
 import { Injectable, Logger } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
-import { MessageDirection, MessageStatus, MessageType } from '@prisma/client'
+import {
+  MessageDirection,
+  MessageStatus,
+  MessageType,
+  OptInMethod,
+  OptInStatus,
+} from '@prisma/client'
 import * as crypto from 'crypto'
-import { normalizePhone } from '@kotodama/shared'
+import { isOptOutMessage, normalizePhone } from '@kotodama/shared'
 import { PrismaService } from '../../prisma/prisma.service'
+import { AutomationsService } from '../automations/automations.service'
 
 type MetaWebhookEntry = {
   changes?: Array<{
@@ -47,6 +54,7 @@ export class WebhooksService {
   constructor(
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
+    private readonly automations: AutomationsService,
   ) {
     this.verifyToken = this.config.get<string>('META_VERIFY_TOKEN', '')
     this.appSecret = this.config.get<string>('META_APP_SECRET', '')
@@ -233,7 +241,7 @@ export class WebhooksService {
       where: { phone },
       update: {},
       create: { phone, name: profileName?.trim() || phone },
-      select: { id: true },
+      select: { id: true, name: true, phone: true, email: true, optInStatus: true },
     })
 
     const content =
@@ -260,6 +268,34 @@ export class WebhooksService {
     this.logger.log(
       `Mensagem inbound persistida: waMessageId=${m.id} type=${m.type} contactId=${contact.id}`,
     )
+
+    // Detecta opt-out por palavra-chave no texto.
+    const text = m.type === 'text' ? m.text?.body ?? '' : ''
+    if (text && isOptOutMessage(text)) {
+      await this.prisma.contact.update({
+        where: { id: contact.id },
+        data: {
+          optInStatus: OptInStatus.OPTED_OUT,
+          optInMethod: OptInMethod.MANUAL,
+        },
+      })
+      this.logger.log(
+        `Opt-out detectado de contactId=${contact.id} (texto="${text.slice(0, 40)}")`,
+      )
+      await this.automations.fire('OPT_OUT_RECEIVED', {
+        id: contact.id,
+        name: contact.name,
+        phone: contact.phone,
+        email: contact.email,
+      })
+    } else {
+      await this.automations.fire('INBOUND_MESSAGE', {
+        id: contact.id,
+        name: contact.name,
+        phone: contact.phone,
+        email: contact.email,
+      })
+    }
   }
 
   private mapMessageType(t: string | undefined): MessageType {
