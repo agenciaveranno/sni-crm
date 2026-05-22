@@ -9,6 +9,8 @@ import {
   Inbox,
   Loader2,
   MessageSquare,
+  Plus,
+  Search,
   Send,
   X,
 } from 'lucide-react'
@@ -108,11 +110,21 @@ function templateInputs(template: TemplateOption) {
   return { headerVarCount, bodyVarCount, buttonVars }
 }
 
+interface ContactLite {
+  id: string
+  name: string
+  phone: string
+  optInStatus: OptInStatus
+}
+
 export default function InboxPage() {
   const qc = useQueryClient()
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
   const [templateOpen, setTemplateOpen] = useState(false)
+  const [newConvOpen, setNewConvOpen] = useState(false)
+  /** Contato escolhido via "Nova conversa" que ainda não tem conversation no inbox. */
+  const [pinnedContact, setPinnedContact] = useState<ContactLite | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const conversations = useQuery({
@@ -162,9 +174,27 @@ export default function InboxPage() {
     onError: (err) => toast.error(apiErrorMessage(err)),
   })
 
-  const selected = conversations.data?.find(
+  const selectedFromList = conversations.data?.find(
     (c) => c.contact.id === selectedId,
   )
+  const selected: Conversation | undefined =
+    selectedFromList ??
+    (pinnedContact && pinnedContact.id === selectedId
+      ? {
+          contact: pinnedContact,
+          lastMessage: null,
+          unreadCount: 0,
+          lastMessageAt: null,
+        }
+      : undefined)
+
+  const pickContactForNewConv = (contact: ContactLite) => {
+    setPinnedContact(contact)
+    setSelectedId(contact.id)
+    setNewConvOpen(false)
+    // Fora da janela de 24h só dá pra falar via template — já abre o modal.
+    setTemplateOpen(true)
+  }
 
   // Auto-select first conversation when list loads
   useEffect(() => {
@@ -172,6 +202,17 @@ export default function InboxPage() {
       setSelectedId(conversations.data[0].contact.id)
     }
   }, [conversations.data, selectedId])
+
+  // Quando o contato pinado já aparece na lista de conversations
+  // (depois de mandar o primeiro template), limpa o pin pra não duplicar.
+  useEffect(() => {
+    if (
+      pinnedContact &&
+      conversations.data?.some((c) => c.contact.id === pinnedContact.id)
+    ) {
+      setPinnedContact(null)
+    }
+  }, [conversations.data, pinnedContact])
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
@@ -192,26 +233,69 @@ export default function InboxPage() {
       <PageHeader
         title="Inbox"
         description="Conversas com seus contatos via WhatsApp."
+        actions={
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={() => setNewConvOpen(true)}
+          >
+            <Plus className="h-4 w-4" />
+            Nova conversa
+          </button>
+        }
       />
 
       {conversations.isLoading ? (
         <div className="flex flex-1 items-center justify-center">
           <Loader2 className="h-6 w-6 animate-spin text-primary" />
         </div>
-      ) : !conversations.data?.length ? (
+      ) : !conversations.data?.length && !pinnedContact ? (
         <EmptyState
           icon={<Inbox className="h-10 w-10" />}
           title="Nenhuma conversa ainda"
-          description="Quando seus contatos enviarem mensagens, elas aparecem aqui."
+          description="Clique em Nova conversa pra falar com um contato que já deu opt-in, ou aguarde mensagens recebidas."
+          action={
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => setNewConvOpen(true)}
+            >
+              <Plus className="h-4 w-4" />
+              Nova conversa
+            </button>
+          }
         />
       ) : (
         <div className="flex min-h-0 flex-1 gap-4">
           <aside className="card flex w-80 flex-col overflow-hidden p-0">
             <div className="border-b border-border px-4 py-3 text-xs font-medium uppercase text-muted-foreground">
-              {conversations.data.length} conversas
+              {(conversations.data?.length ?? 0) + (pinnedContact ? 1 : 0)} conversas
             </div>
             <div className="flex-1 overflow-y-auto">
-              {conversations.data.map((c) => (
+              {pinnedContact && (
+                <button
+                  key={pinnedContact.id}
+                  type="button"
+                  onClick={() => setSelectedId(pinnedContact.id)}
+                  className={cn(
+                    'flex w-full flex-col gap-1 border-b border-border px-4 py-3 text-left hover:bg-surface/60',
+                    selectedId === pinnedContact.id && 'bg-primary/5',
+                  )}
+                >
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="truncate text-sm font-semibold text-ink">
+                      {pinnedContact.name}
+                    </span>
+                    <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                      novo
+                    </span>
+                  </div>
+                  <div className="truncate text-xs text-muted-foreground">
+                    Nova conversa · {formatPhone(pinnedContact.phone)}
+                  </div>
+                </button>
+              )}
+              {(conversations.data ?? []).map((c) => (
                 <button
                   key={c.contact.id}
                   type="button"
@@ -339,6 +423,110 @@ export default function InboxPage() {
           isPending={sendTemplate.isPending}
         />
       )}
+
+      {newConvOpen && (
+        <NewConversationDialog
+          onClose={() => setNewConvOpen(false)}
+          onPick={pickContactForNewConv}
+        />
+      )}
+    </div>
+  )
+}
+
+function NewConversationDialog({
+  onClose,
+  onPick,
+}: {
+  onClose: () => void
+  onPick: (c: ContactLite) => void
+}) {
+  const [search, setSearch] = useState('')
+  const [debounced, setDebounced] = useState('')
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(search), 250)
+    return () => clearTimeout(t)
+  }, [search])
+
+  const results = useQuery({
+    queryKey: ['contacts', 'opted-in', debounced],
+    queryFn: async () => {
+      const params: Record<string, string | number> = {
+        optInStatus: 'OPTED_IN',
+        page: 1,
+        limit: 30,
+        sortBy: 'name',
+        sortOrder: 'asc',
+      }
+      if (debounced.trim()) params.search = debounced.trim()
+      const res = await api.get<{
+        data: ContactLite[]
+        pagination: { total: number }
+      }>('/contacts', { params })
+      return res.data
+    },
+  })
+
+  const items = results.data?.data ?? []
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 pt-24">
+      <div className="card w-full max-w-md p-0">
+        <div className="flex items-center justify-between border-b border-border px-4 py-3">
+          <h3 className="text-base font-semibold text-ink">Nova conversa</h3>
+          <button type="button" onClick={onClose} className="btn-ghost p-1">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="border-b border-border p-3">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <input
+              autoFocus
+              className="input pl-8"
+              placeholder="Buscar por nome, telefone ou e-mail…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+          <p className="mt-2 text-[11px] text-muted-foreground">
+            Só contatos com <strong>opt-in confirmado</strong>. Fora da janela
+            de 24h o primeiro envio precisa ser via template aprovado.
+          </p>
+        </div>
+
+        <div className="max-h-[50vh] overflow-y-auto">
+          {results.isLoading ? (
+            <div className="flex justify-center py-8">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : items.length === 0 ? (
+            <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+              {debounced
+                ? 'Nenhum contato OPTED_IN bate com essa busca.'
+                : 'Nenhum contato com opt-in. Cadastre na aba Contatos ou importe.'}
+            </div>
+          ) : (
+            items.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => onPick(c)}
+                className="flex w-full flex-col gap-0.5 border-b border-border px-4 py-2.5 text-left last:border-0 hover:bg-surface/60"
+              >
+                <span className="truncate text-sm font-medium text-ink">
+                  {c.name}
+                </span>
+                <span className="truncate font-mono text-xs text-muted-foreground">
+                  {formatPhone(c.phone)}
+                </span>
+              </button>
+            ))
+          )}
+        </div>
+      </div>
     </div>
   )
 }
